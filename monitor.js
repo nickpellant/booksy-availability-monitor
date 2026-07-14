@@ -34,6 +34,10 @@ const CFG = {
 
 const log = (...a) => console.log(new Date().toISOString(), ...a);
 
+// Raised when Booksy's WAF blocks the request (common from datacenter/CI IPs).
+// Treated as a quiet skip, not a failure — the next run gets a different IP.
+class BlockedError extends Error {}
+
 const EMPTY_STATE = { lastEarliest: null, lastAlerted: null, lastChecked: null };
 
 function readState() {
@@ -190,7 +194,24 @@ async function checkOnce(page) {
   // picked by mistake (they book a different calendar).
   const stafferUrl = `${CFG.businessUrl}/staffer/${CFG.stafferId}`;
   log('Navigating to', stafferUrl);
-  await page.goto(stafferUrl, { waitUntil: 'domcontentloaded', timeout: 45000 });
+  const resp = await page.goto(stafferUrl, { waitUntil: 'domcontentloaded', timeout: 45000 });
+
+  // Booksy's WAF returns a bare "403 Forbidden" (or 429) page for IPs it doesn't
+  // like — routine from cloud/CI runners. Detect it and bail as a soft skip.
+  const status = resp ? resp.status() : 0;
+  if (status === 403 || status === 429) {
+    throw new BlockedError(`Booksy returned HTTP ${status} (WAF block)`);
+  }
+  const looksBlocked = await page
+    .evaluate(() => {
+      const t = (document.body && document.body.innerText || '').trim();
+      return t.length < 300 && /\b(403 Forbidden|Access Denied|Attention Required|Request blocked)\b/i.test(t);
+    })
+    .catch(() => false);
+  if (looksBlocked) {
+    throw new BlockedError('Booksy served a block page (403/Access Denied)');
+  }
+
   await dismissCookies(page);
   await page.waitForTimeout(1000);
 
@@ -254,11 +275,22 @@ async function main() {
   try {
     result = await checkOnce(page);
   } catch (err) {
+    // A WAF block is not a bug — skip quietly and let the next run (new IP) retry.
+    if (err instanceof BlockedError) {
+      log(`SKIP: ${err.message}. Not a failure — next run gets a fresh IP.`);
+      await browser.close();
+      return;
+    }
     log('First attempt failed:', err.message, '— retrying once.');
     await page.waitForTimeout(4000);
     try {
       result = await checkOnce(page);
     } catch (err2) {
+      if (err2 instanceof BlockedError) {
+        log(`SKIP: ${err2.message}. Not a failure — next run gets a fresh IP.`);
+        await browser.close();
+        return;
+      }
       await page.screenshot({ path: 'error.png', fullPage: true }).catch(() => {});
       await browser.close();
       throw err2;
