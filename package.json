@@ -1,0 +1,13 @@
+{
+  "name": "booksy-availability-monitor",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Monitor Booksy for earlier cancellation slots with Dale @ Hinces Barber and push a Telegram alert.",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node monitor.js"
+  },
+  "dependencies": {
+    "playwright": "1.55.0"
+  }
+}
