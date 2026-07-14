@@ -115,12 +115,20 @@ async function readEarliest(page) {
   // CRITICAL correctness guard: the widget's order summary must show our staffer.
   // Multiple staff offer identically-named services; booking the wrong one would
   // report the wrong availability. Substring (not exact) match so it still holds
-  // if the summary renders a fuller name like "Dale Hince". Fail loudly on miss.
-  const staffOk = await frame.$$eval(
-    '*',
-    (els, name) => els.some((e) => e.children.length === 0 && (e.textContent || '').includes(name)),
-    CFG.stafferName
-  );
+  // if the summary renders a fuller name like "Dale Hince". POLL for it — the
+  // order panel renders slightly after the calendar cards, so a one-shot check
+  // races and can false-fail. Fail loudly only if it never appears.
+  const staffOk = await frame
+    .waitForFunction(
+      (name) =>
+        [...document.querySelectorAll('*')].some(
+          (e) => e.children.length === 0 && (e.textContent || '').includes(name)
+        ),
+      CFG.stafferName,
+      { timeout: 12000 }
+    )
+    .then(() => true)
+    .catch(() => false);
   if (!staffOk) {
     throw new Error(`Order summary does not show staffer "${CFG.stafferName}" — refusing to trust availability`);
   }
