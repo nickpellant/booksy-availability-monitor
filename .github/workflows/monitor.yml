@@ -5,13 +5,13 @@ on:
     - cron: "*/15 * * * *" # every 15 min (GitHub may delay 5-15 min under load)
   workflow_dispatch: {} # manual test runs
 
-# Prevent overlapping runs stomping on state.json.
+# Prevent overlapping runs racing on the state cache.
 concurrency:
   group: booksy-availability-monitor
   cancel-in-progress: false
 
 permissions:
-  contents: write # commit state.json back
+  contents: read
 
 jobs:
   check:
@@ -19,6 +19,18 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
+
+      # Dedupe state lives in the Actions cache, NOT git — a unique key each run
+      # (cache entries are immutable) plus a prefix restore-key to load the most
+      # recent previous state. Avoids commit/push/rebase conflicts entirely.
+      # Worst case (rare cache eviction) is one duplicate alert.
+      - name: Restore dedupe state
+        uses: actions/cache@v4
+        with:
+          path: state.json
+          key: booksy-state-${{ github.run_id }}
+          restore-keys: |
+            booksy-state-
 
       - uses: actions/setup-node@v4
         with:
@@ -43,19 +55,6 @@ jobs:
           TARGET_DATE: ${{ vars.TARGET_DATE }}
           SERVICE_NAME: ${{ vars.SERVICE_NAME }}
         run: node monitor.js
-
-      - name: Persist state
-        if: success()
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add state.json
-          git diff --staged --quiet && exit 0
-          git commit -m "chore: update state [skip ci]"
-          # Rebase on any commit that landed since checkout so the push isn't
-          # rejected as non-fast-forward (which would drop this run's state).
-          git pull --rebase --autostash origin "${GITHUB_REF_NAME}" || true
-          git push
 
       - name: Upload debug screenshot on failure
         if: failure()

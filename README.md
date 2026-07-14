@@ -11,9 +11,11 @@ Booking stays manual. This only detects and notifies.
 `monitor.js` drives the real Booksy booking flow with headless Chromium
 (Playwright): open the business page → pick Dale → click **Book** on the service
 → read the earliest available date from the calendar. If that date is on/before
-`TARGET_DATE` and has changed since the last alert, it pushes a Telegram message.
-Runs every ~15 min on GitHub Actions. `state.json` (committed back by the
-workflow) suppresses duplicate alerts.
+`TARGET_DATE` and is new or earlier than the last alert, it pushes a Telegram
+message. Runs every ~15 min on GitHub Actions. Dedupe state (`state.json`) is
+persisted between runs via the Actions **cache** — not committed to git — so
+there are no push/merge conflicts. A rare cache miss costs at most one duplicate
+alert. Locally, `state.json` is just a file the script reads/writes.
 
 ## One-time setup
 
